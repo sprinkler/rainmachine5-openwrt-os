@@ -1,0 +1,374 @@
+Index: linux-4.4.14/drivers/staging/fbtft/fb_ili9163.c
+===================================================================
+--- linux-4.4.14.orig/drivers/staging/fbtft/fb_ili9163.c	2016-06-24 20:18:38.000000000 +0300
++++ linux-4.4.14/drivers/staging/fbtft/fb_ili9163.c	2017-07-14 10:19:27.631029187 +0300
+@@ -1,10 +1,11 @@
+ /*
+  * FB driver for the ILI9163 LCD Controller
+  *
+- * Copyright (C) 2015 Kozhevnikov Anatoly
++ * Copyright (C) 2017 Csenteri Barna
+  *
+- * Based on ili9325.c by Noralf Tronnes and
+- * .S.U.M.O.T.O.Y. by Max MC Costa (https://github.com/sumotoy/TFT_ILI9163C).
++ * Based on 2015 Kozhevnikov Anatoly
++ *   based on ili9325.c by Noralf Tronnes and
++ *   .S.U.M.O.T.O.Y. by Max MC Costa (https://github.com/sumotoy/TFT_ILI9163C).
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -22,53 +23,28 @@
+ #include <linux/init.h>
+ #include <linux/gpio.h>
+ #include <linux/delay.h>
++#include <video/mipi_display.h>
+ 
+ #include "fbtft.h"
+ 
+ #define DRVNAME		"fb_ili9163"
+ #define WIDTH		128
+-#define HEIGHT		128
++#define HEIGHT		160
+ #define BPP		16
+ #define FPS		30
+ 
+ #ifdef GAMMA_ADJ
+ #define GAMMA_LEN	15
+-#define GAMMA_NUM	1
+-#define DEFAULT_GAMMA	"36 29 12 22 1C 15 42 B7 2F 13 12 0A 11 0B 06\n"
++#define GAMMA_NUM	2
++#define DEFAULT_GAMMA	"3F 25 1C 1E 20 12 2A 90 24 11 00 00 00 00 00 20 20 20 20 05 15 00 A7 3D 18 25 2A 2B 2B 3A\n" 
+ #endif
+ 
+ /* ILI9163C commands */
+-#define CMD_NOP		0x00 /* Non operation*/
+-#define CMD_SWRESET	0x01 /* Soft Reset */
+-#define CMD_SLPIN	0x10 /* Sleep ON */
+-#define CMD_SLPOUT	0x11 /* Sleep OFF */
+-#define CMD_PTLON	0x12 /* Partial Mode ON */
+-#define CMD_NORML	0x13 /* Normal Display ON */
+-#define CMD_DINVOF	0x20 /* Display Inversion OFF */
+-#define CMD_DINVON	0x21 /* Display Inversion ON */
+-#define CMD_GAMMASET	0x26 /* Gamma Set (0x01[1],0x02[2],0x04[3],0x08[4]) */
+-#define CMD_DISPOFF	0x28 /* Display OFF */
+-#define CMD_DISPON	0x29 /* Display ON */
+-#define CMD_IDLEON	0x39 /* Idle Mode ON */
+-#define CMD_IDLEOF	0x38 /* Idle Mode OFF */
+-#define CMD_CLMADRS	0x2A /* Column Address Set */
+-#define CMD_PGEADRS	0x2B /* Page Address Set */
+-
+-#define CMD_RAMWR	0x2C /* Memory Write */
+-#define CMD_RAMRD	0x2E /* Memory Read */
+-#define CMD_CLRSPACE	0x2D /* Color Space : 4K/65K/262K */
+-#define CMD_PARTAREA	0x30 /* Partial Area */
+-#define CMD_VSCLLDEF	0x33 /* Vertical Scroll Definition */
+-#define CMD_TEFXLON	0x34 /* Tearing Effect Line ON */
+-#define CMD_TEFXLOF	0x35 /* Tearing Effect Line OFF */
+-#define CMD_MADCTL	0x36 /* Memory Access Control */
+-
+-#define CMD_PIXFMT	0x3A /* Interface Pixel Format */
+-#define CMD_FRMCTR1	0xB1 /* Frame Rate Control
+-				(In normal mode/Full colors) */
++#define CMD_FRMCTR1	0xB1 /* Frame Rate Control */
++			     /*	(In normal mode/Full colors) */
+ #define CMD_FRMCTR2	0xB2 /* Frame Rate Control (In Idle mode/8-colors) */
+-#define CMD_FRMCTR3	0xB3 /* Frame Rate Control
+-				(In Partial mode/full colors) */
++#define CMD_FRMCTR3	0xB3 /* Frame Rate Control */
++			     /*	(In Partial mode/full colors) */
+ #define CMD_DINVCTR	0xB4 /* Display Inversion Control */
+ #define CMD_RGBBLK	0xB5 /* RGB Interface Blanking Porch setting */
+ #define CMD_DFUNCTR	0xB6 /* Display Function set 5 */
+@@ -88,17 +64,18 @@
+ #define CMD_GAMRSEL	0xF2 /* GAM_R_SEL */
+ 
+ /*
+-This display:
+-http://www.ebay.com/itm/Replace-Nokia-5110-LCD-1-44-Red-Serial-128X128-SPI-Color-TFT-LCD-Display-Module-/271422122271
+-This particular display has a design error! The controller has 3 pins to
+-configure to constrain the memory and resolution to a fixed dimension (in
+-that case 128x128) but they leaved those pins configured for 128x160 so
+-there was several pixel memory addressing problems.
+-I solved by setup several parameters that dinamically fix the resolution as
+-needit so below the parameters for this display. If you have a strain or a
+-correct display (can happen with chinese) you can copy those parameters and
+-create setup for different displays.
+-*/
++ * This display:
++ * http://www.ebay.com/itm/Replace-Nokia-5110-LCD-1-44-Red-Serial-128X128-SPI-
++ * Color-TFT-LCD-Display-Module-/271422122271
++ * This particular display has a design error! The controller has 3 pins to
++ * configure to constrain the memory and resolution to a fixed dimension (in
++ * that case 128x128) but they leaved those pins configured for 128x160 so
++ * there was several pixel memory addressing problems.
++ * I solved by setup several parameters that dinamically fix the resolution as
++ * needit so below the parameters for this display. If you have a strain or a
++ * correct display (can happen with chinese) you can copy those parameters and
++ * create setup for different displays.
++ */
+ 
+ #ifdef RED
+ #define __OFFSET		32 /*see note 2 - this is the red version */
+@@ -113,88 +90,90 @@
+ 	if (par->gpio.cs != -1)
+ 		gpio_set_value(par->gpio.cs, 0);  /* Activate chip */
+ 
+-	write_reg(par, CMD_SWRESET); /* software reset */
++	write_reg(par, MIPI_DCS_SOFT_RESET); /* 0x01 software reset */
+ 	mdelay(500);
+-	write_reg(par, CMD_SLPOUT); /* exit sleep */
++	write_reg(par, MIPI_DCS_EXIT_SLEEP_MODE); /* 0x11 exit sleep */
+ 	mdelay(5);
+-	write_reg(par, CMD_PIXFMT, 0x05); /* Set Color Format 16bit */
+-	write_reg(par, CMD_GAMMASET, 0x02); /* default gamma curve 3 */
++	write_reg(par, MIPI_DCS_SET_PIXEL_FORMAT, 0x55);//MIPI_DCS_PIXEL_FMT_16BIT //0x3A = 0x05
++	/* default gamma curve 3 */
++	write_reg(par, MIPI_DCS_SET_GAMMA_CURVE, 0x02);//0x26
+ #ifdef GAMMA_ADJ
+-	write_reg(par, CMD_GAMRSEL, 0x01); /* Enable Gamma adj */
++	write_reg(par, CMD_GAMRSEL, 0x01); /* 0xF2  Enable Gamma adj */
+ #endif
+-	write_reg(par, CMD_NORML);
+-	write_reg(par, CMD_DFUNCTR, 0xff, 0x06);
++	write_reg(par, MIPI_DCS_ENTER_NORMAL_MODE);//0x13
++	write_reg(par, CMD_DFUNCTR, 0xff, 0x06);//0xB6
+ 	/* Frame Rate Control (In normal mode/Full colors) */
+-	write_reg(par, CMD_FRMCTR1, 0x08, 0x02);
+-	write_reg(par, CMD_DINVCTR, 0x07); /* display inversion  */
++	write_reg(par, CMD_FRMCTR1, 0x08, 0x02);//0xB1
++	write_reg(par, CMD_DINVCTR, 0x07); /* 0xB4 display inversion  */
+ 	/* Set VRH1[4:0] & VC[2:0] for VCI1 & GVDD */
+-	write_reg(par, CMD_PWCTR1, 0x0A, 0x02);
++	write_reg(par, CMD_PWCTR1, 0x0A, 0x02);//0xC0
+ 	/* Set BT[2:0] for AVDD & VCL & VGH & VGL  */
+-	write_reg(par, CMD_PWCTR2, 0x02);
++	write_reg(par, CMD_PWCTR2, 0x02);//0xC1
+ 	/* Set VMH[6:0] & VML[6:0] for VOMH & VCOML */
+-	write_reg(par, CMD_VCOMCTR1, 0x50, 0x63);
+-	write_reg(par, CMD_VCOMOFFS, 0);
++	write_reg(par, CMD_VCOMCTR1, 0x50, 0x63);//0xC5
++	write_reg(par, CMD_VCOMOFFS, 0);//0xC7
+ 
+-	write_reg(par, CMD_CLMADRS, 0, 0, 0, WIDTH); /* Set Column Address */
+-	write_reg(par, CMD_PGEADRS, 0, 0, 0, HEIGHT); /* Set Page Address */
++	write_reg(par, MIPI_DCS_SET_COLUMN_ADDRESS, 0, 0, 0, WIDTH);//0x2A
++	write_reg(par, MIPI_DCS_SET_PAGE_ADDRESS, 0, 0, 0, HEIGHT);//0x2B
+ 
+-	write_reg(par, CMD_DISPON); /* display ON */
+-	write_reg(par, CMD_RAMWR); /* Memory Write */
++	write_reg(par, MIPI_DCS_SET_DISPLAY_ON); /* 0x29 display ON */
++	write_reg(par, MIPI_DCS_WRITE_MEMORY_START); /*0x2C Memory Write */
+ 
+ 	return 0;
+ }
+ 
+ static void set_addr_win(struct fbtft_par *par, int xs, int ys,
+-				int xe, int ye)
++			 int xe, int ye)
+ {
+ 	switch (par->info->var.rotate) {
+ 	case 0:
+-		write_reg(par, CMD_CLMADRS, xs >> 8, xs & 0xff, xe >> 8,
+-				xe & 0xff);
+-		write_reg(par, CMD_PGEADRS,
+-				(ys + __OFFSET) >> 8, (ys + __OFFSET) & 0xff,
+-				(ye + __OFFSET) >> 8, (ye + __OFFSET) & 0xff);
++		write_reg(par, MIPI_DCS_SET_COLUMN_ADDRESS,
++			  xs >> 8, xs & 0xff, xe >> 8, xe & 0xff);
++		write_reg(par, MIPI_DCS_SET_PAGE_ADDRESS,
++			  (ys + __OFFSET) >> 8, (ys + __OFFSET) & 0xff,
++			  (ye + __OFFSET) >> 8, (ye + __OFFSET) & 0xff);
+ 		break;
+ 	case 90:
+-		write_reg(par, CMD_CLMADRS,
+-				(xs + __OFFSET) >> 8, (xs + __OFFSET) & 0xff,
+-				(xe + __OFFSET) >> 8, (xe + __OFFSET) & 0xff);
+-		write_reg(par, CMD_PGEADRS, ys >> 8, ys & 0xff, ye >> 8,
+-				ye & 0xff);
++		write_reg(par, MIPI_DCS_SET_COLUMN_ADDRESS,
++			  (xs + __OFFSET) >> 8, (xs + __OFFSET) & 0xff,
++			  (xe + __OFFSET) >> 8, (xe + __OFFSET) & 0xff);
++		write_reg(par, MIPI_DCS_SET_PAGE_ADDRESS,
++			  ys >> 8, ys & 0xff, ye >> 8, ye & 0xff);
+ 		break;
+ 	case 180:
+ 	case 270:
+-		write_reg(par, CMD_CLMADRS, xs >> 8, xs & 0xff, xe >> 8,
+-				xe & 0xff);
+-		write_reg(par, CMD_PGEADRS, ys >> 8, ys & 0xff, ye >> 8,
+-				ye & 0xff);
++		write_reg(par, MIPI_DCS_SET_COLUMN_ADDRESS,
++			  xs >> 8, xs & 0xff, xe >> 8, xe & 0xff);
++		write_reg(par, MIPI_DCS_SET_PAGE_ADDRESS,
++			  ys >> 8, ys & 0xff, ye >> 8, ye & 0xff);
+ 		break;
+ 	default:
+-		par->info->var.rotate = 0; /* Fix incorrect setting */
++		/* Fix incorrect setting */
++		par->info->var.rotate = 0;
+ 	}
+-	write_reg(par, CMD_RAMWR); /* Write Data to GRAM mode */
++	write_reg(par, MIPI_DCS_WRITE_MEMORY_START);
+ }
+ 
+ /*
+-7) MY:  1(bottom to top),	0(top to bottom)    Row Address Order
+-6) MX:  1(R to L),		0(L to R)	    Column Address Order
+-5) MV:  1(Exchanged),		0(normal)	    Row/Column exchange
+-4) ML:  1(bottom to top),	0(top to bottom)    Vertical Refresh Order
+-3) RGB: 1(BGR),			0(RGB)		    Color Space
+-2) MH:  1(R to L),		0(L to R)	    Horizontal Refresh Order
+-1)
+-0)
+-
+-	MY, MX, MV, ML,RGB, MH, D1, D0
+-	0 | 0 | 0 | 0 | 1 | 0 | 0 | 0	//normal
+-	1 | 0 | 0 | 0 | 1 | 0 | 0 | 0	//Y-Mirror
+-	0 | 1 | 0 | 0 | 1 | 0 | 0 | 0	//X-Mirror
+-	1 | 1 | 0 | 0 | 1 | 0 | 0 | 0	//X-Y-Mirror
+-	0 | 0 | 1 | 0 | 1 | 0 | 0 | 0	//X-Y Exchange
+-	1 | 0 | 1 | 0 | 1 | 0 | 0 | 0	//X-Y Exchange, Y-Mirror
+-	0 | 1 | 1 | 0 | 1 | 0 | 0 | 0	//XY exchange
+-	1 | 1 | 1 | 0 | 1 | 0 | 0 | 0
+-*/
++ * 7) MY:  1(bottom to top),	0(top to bottom)    Row Address Order
++ * 6) MX:  1(R to L),		0(L to R)	    Column Address Order
++ * 5) MV:  1(Exchanged),	0(normal)	    Row/Column exchange
++ * 4) ML:  1(bottom to top),	0(top to bottom)    Vertical Refresh Order
++ * 3) RGB: 1(BGR),		0(RGB)		    Color Space
++ * 2) MH:  1(R to L),		0(L to R)	    Horizontal Refresh Order
++ * 1)
++ * 0)
++ *
++ *	MY, MX, MV, ML,RGB, MH, D1, D0
++ *	0 | 0 | 0 | 0 | 1 | 0 | 0 | 0	//normal
++ *	1 | 0 | 0 | 0 | 1 | 0 | 0 | 0	//Y-Mirror
++ *	0 | 1 | 0 | 0 | 1 | 0 | 0 | 0	//X-Mirror
++ *	1 | 1 | 0 | 0 | 1 | 0 | 0 | 0	//X-Y-Mirror
++ *	0 | 0 | 1 | 0 | 1 | 0 | 0 | 0	//X-Y Exchange
++ *	1 | 0 | 1 | 0 | 1 | 0 | 0 | 0	//X-Y Exchange, Y-Mirror
++ *	0 | 1 | 1 | 0 | 1 | 0 | 0 | 0	//XY exchange
++ *	1 | 1 | 1 | 0 | 1 | 0 | 0 | 0
++ */
+ static int set_var(struct fbtft_par *par)
+ {
+ 	u8 mactrl_data = 0; /* Avoid compiler warning */
+@@ -217,48 +196,54 @@
+ 	/* Colorspcae */
+ 	if (par->bgr)
+ 		mactrl_data |= (1 << 2);
+-	write_reg(par, CMD_MADCTL, mactrl_data);
+-	write_reg(par, CMD_RAMWR); /* Write Data to GRAM mode */
++	write_reg(par, MIPI_DCS_SET_ADDRESS_MODE, mactrl_data);
++	write_reg(par, MIPI_DCS_WRITE_MEMORY_START);
+ 	return 0;
+ }
+ 
+ #ifdef GAMMA_ADJ
+-#define CURVE(num, idx)  curves[num * par->gamma.num_values + idx]
+ static int gamma_adj(struct fbtft_par *par, unsigned long *curves)
+ {
+-	unsigned long mask[] = {
+-		0x3F, 0x3F, 0x3F, 0x3F, 0x3F,
+-		0x1f, 0x3f, 0x0f, 0x0f, 0x7f, 0x1f,
+-		0x3F, 0x3F, 0x3F, 0x3F, 0x3F};
+-	int i, j;
+-
+-	for (i = 0; i < GAMMA_NUM; i++)
+-		for (j = 0; j < GAMMA_LEN; j++)
+-			CURVE(i, j) &= mask[i * par->gamma.num_values + j];
+-
+-	write_reg(par, CMD_PGAMMAC,
+-				CURVE(0, 0),
+-				CURVE(0, 1),
+-				CURVE(0, 2),
+-				CURVE(0, 3),
+-				CURVE(0, 4),
+-				CURVE(0, 5),
+-				CURVE(0, 6),
+-				(CURVE(0, 7) << 4) | CURVE(0, 8),
+-				CURVE(0, 9),
+-				CURVE(0, 10),
+-				CURVE(0, 11),
+-				CURVE(0, 12),
+-				CURVE(0, 13),
+-				CURVE(0, 14),
+-				CURVE(0, 15)
+-				);
++	write_reg(par, CMD_PGAMMAC, 
++		  par->gamma.num_values[0],
++		  par->gamma.num_values[1],
++		  par->gamma.num_values[2],
++		  par->gamma.num_values[3],
++		  par->gamma.num_values[4],
++		  par->gamma.num_values[5],
++		  par->gamma.num_values[6],
++		  par->gamma.num_values[7],
++		  par->gamma.num_values[8],
++		  par->gamma.num_values[9],
++		  par->gamma.num_values[10],
++		  par->gamma.num_values[11],
++		  par->gamma.num_values[12],
++		  par->gamma.num_values[13],
++		  par->gamma.num_values[14]);
++          
++    if (GAMMA_NUM > 1)
++        write_reg(par, CMD_NGAMMAC, 
++		  par->gamma.num_values[15],
++		  par->gamma.num_values[16],
++		  par->gamma.num_values[17],
++		  par->gamma.num_values[18],
++		  par->gamma.num_values[19],
++		  par->gamma.num_values[20],
++		  par->gamma.num_values[21],
++		  par->gamma.num_values[22],
++		  par->gamma.num_values[23],
++		  par->gamma.num_values[24],
++		  par->gamma.num_values[25],
++		  par->gamma.num_values[26],
++		  par->gamma.num_values[27],
++		  par->gamma.num_values[28],
++		  par->gamma.num_values[29]);
+ 
+-	write_reg(par, CMD_RAMWR); /* Write Data to GRAM mode */
++	/* Write Data to GRAM mode */
++	write_reg(par, MIPI_DCS_WRITE_MEMORY_START);
+ 
+ 	return 0;
+ }
+-#undef CURVE
+ #endif
+ 
+ static struct fbtft_display display = {
+Index: linux-4.4.14/drivers/staging/fbtft/fbtft_device.c
+===================================================================
+--- linux-4.4.14.orig/drivers/staging/fbtft/fbtft_device.c	2016-06-24 20:18:38.000000000 +0300
++++ linux-4.4.14/drivers/staging/fbtft/fbtft_device.c	2017-07-14 10:25:34.883038589 +0300
+@@ -1189,6 +1189,27 @@
+ 			}
+ 		}
+ 	}, {
++		.name = "rainmachine5",
++		.spi = &(struct spi_board_info) {
++			.modalias = "fb_ili9163",
++			.max_speed_hz = 25000000,
++			.mode = SPI_MODE_0,
++			.platform_data = &(struct fbtft_platform_data) {
++				.display = {
++					.buswidth = 8,
++					.backlight = 1,
++					.txbuflen = 16,
++				},
++				.bgr = true,
++				.gpios = (const struct fbtft_gpio []) {
++					{ "reset", 17 },
++					{ "dc", 1 },
++					{ "led", 19 },
++					{},
++				},
++			}
++		}
++	}, {
+ 		/* This should be the last item.
+ 		   Used with the custom argument */
+ 		.name = "",
