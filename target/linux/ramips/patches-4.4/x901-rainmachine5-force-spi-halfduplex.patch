@@ -1,0 +1,15 @@
+Index: linux-4.4.14/drivers/spi/spi-mt7621.c
+===================================================================
+--- linux-4.4.14.orig/drivers/spi/spi-mt7621.c	2017-07-17 10:27:29.893677304 +0300
++++ linux-4.4.14/drivers/spi/spi-mt7621.c	2017-07-17 10:29:40.249680641 +0300
+@@ -357,8 +357,8 @@
+ 	struct spi_device *spi = m->spi;
+ 	int cs = spi->chip_select;
+ 
+-	if (cs)
+-		return mt7621_spi_transfer_full_duplex(master, m);
++//	if (cs)
++//		return mt7621_spi_transfer_full_duplex(master, m);
+ 	return mt7621_spi_transfer_half_duplex(master, m);
+ }
+ 
