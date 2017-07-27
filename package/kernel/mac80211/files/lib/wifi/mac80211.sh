@@ -110,22 +110,29 @@ detect_mac80211() {
 		fi
 
 		cat <<EOF
-config wifi-device  radio$devidx
-	option type     mac80211
-	option channel  ${channel}
-	option hwmode	11${mode_band}
-$dev_id
-$ht_capab
-	# REMOVE THIS LINE TO ENABLE WIFI:
-	option disabled 1
+config wifi-device  radio0
+        option type     mac80211
+        option channel  '4'
+        option hwmode   11g
+        option path     'platform/10300000.wmac'
+        option htmode   HT40
+        # REMOVE THIS LINE TO ENABLE WIFI:
+        #option disabled 1
 
-config wifi-iface
-	option device   radio$devidx
-	option network  lan
-	option mode     ap
-	option ssid     OpenWrt
-	option encryption none
+config wifi-iface 'ap'
+        option device   radio0
+        option network  lan
+        option mode     ap
+        option ssid     RainMachine5
+        option encryption none
 
+config wifi-iface 'sta'
+        option device radio0
+        option network 'wifi'
+        option ssid 'LinuxConsulting2'
+        option mode 'sta'
+        option encryption 'psk2'
+        option key '0332808345'
 EOF
 	devidx=$(($devidx + 1))
 	done
