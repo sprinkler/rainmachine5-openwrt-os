@@ -154,6 +154,31 @@
 
 &i2c {
 	status = "okay";
+
+	cap1114@28 {
+		compatible = "microchip,cap1114";
+		interrupt-parent = <&gpio1>;
+		interrupts = <37 0>;
+		#interrupts = <29 0>;
+		reg = <0x28>;
+		autorepeat;
+		microchip,sensor-gain = <2>;
+
+		linux,keycodes = <103>,		/* KEY_UP */
+				 <106>,		/* KEY_RIGHT */
+				 <108>,		/* KEY_DOWN */
+				 <105>,		/* KEY_LEFT */
+				 <109>,		/* KEY_PAGEDOWN */
+				 <104>;		/* KEY_PAGEUP */
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		usr@0 {
+			label = "cap11xx:green:usr0";
+			reg = <0>;
+		};
+	};
 };
 
 &uart1 {
